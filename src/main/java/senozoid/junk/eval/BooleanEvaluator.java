@@ -3,6 +3,7 @@ package senozoid.junk.eval;
 //import java.util.Scanner;
 import java.util.regex.Pattern;
 
+@Deprecated
 public final class BooleanEvaluator{
     private static final String[] validOperators={"==","!=","<=",">=","<",">"};//WARNING: DO NOT CHANGE THIS ORDER, SEE NOTES
 
