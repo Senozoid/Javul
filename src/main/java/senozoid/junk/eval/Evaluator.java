@@ -2,12 +2,37 @@ package senozoid.junk.eval;
 
 import java.util.*;
 
-//TODO: reconsider using float to store value in Node
-//TODO: write docs explaining quirks and possible issues
+/*
+TODO: write docs explaining quirks and possibly unexpected behaviour, some of which are:
+    1. There is no support for assignment operators, or for floating point representations with "E".
+        Example effect 1: if "id == 2" is true, "--id" evaluates to 2.
+    2. All unary operators are prefix operators, and have higher precedence than all binary operators.
+        Example effect 1: "0-2^14" and "-2^14" evaluate to -16 and +16 respectively.
+        Example effect 2: "!(1>2)" evaluates to true, but "!1>2" is an illegal expression.
+    3. All binary operators of equal precedence are left associative.
+        Example effect 1: "24/3/4" evaluates to 2, and not 32.
+    4. Identifiers can be interpreted as either numeric or boolean operands (like int in C), but
+        each operation takes and produces values of a particular type, and the two different types of value
+        are not interconvertible or comparable (unlike int in C). This is a personal choice, to prevent hidden
+        mistakes, and strangeness with constants, like true+true being 2, which is neither true nor false.
+        Example effect 1: "id == 1" and "id == true" are both valid expressions, but "1 == true" is not.
+        Example effect 2: "!id" is a valid boolean and "-id" a valid numeric expression, but "!id != -id" is illegal.
+    5. During evaluation, identities and intermediate numeric values are stored as float and the result is
+        rounded (half up) to int. Boolean representations of identifiers are derived also by first rounding to int.
+        This is quite easy to change, and exists because the original implementation used only int variables.
+        Example effect 1: "7/2" evaluates to 4, and "7/2 == 3.5" evaluates to true.
+        Example effect 2: If "id == -0.5" evaluates to true, then "id == false" also evaluates to true.
+*/
+
 public final class Evaluator{
 
+    static int floatToInt(float original){
+        //return (int)original;//if truncated
+        return Math.round(original);//if rounded half up
+    }
+
     public static int evalInt(String expression){
-        return Math.round(evaluate(expression).toFloat());//rounds half up
+        return floatToInt(evaluate(expression).toFloat());
     }
 
     public static boolean evalBool(String expression){
@@ -15,7 +40,6 @@ public final class Evaluator{
     }
 
     private static Node evaluate(String expression){
-        //System.out.println("~".repeat(6)+": \""+expression+"\"");
         Stack stack = new Stack(expression);
         Node node = stack.peek();
         do{
@@ -42,28 +66,28 @@ public final class Evaluator{
         if("true".equalsIgnoreCase(term)) termNode.setValue(true);
         else if("false".equalsIgnoreCase(term)) termNode.setValue(false);
 
-        else termNode.setValue(0,false);//TODO: remove placeholder and fetch value from game-specific identifier
+        //identifier
+        else throw new IllegalStateException("Cannot fetch value from identifier \""+term+"\"");//TODO: remove placeholder and fetch value from game-specific identifier
     }
 
     private static Node operate(Node parent, Node child){
-        if(!child.isDone()) throw new IllegalArgumentException("Cannot operate, child node not done");//TODO
+        if(!child.isDone()) throw new IllegalArgumentException("Cannot operate, child node not done");
 
         Optional<Operator> optOp = parent.getOperator();
-        if(optOp.isEmpty()) throw new IllegalArgumentException("Cannot operate, parent node has no operator");//TODO
+        if(optOp.isEmpty()) throw new IllegalArgumentException("Cannot operate, parent node has no operator");
         Operator op = optOp.get();
 
-        if(op.isUnary() && parent.hasValue()) throw new IllegalArgumentException(op+" with left operand");//TODO
+        if(op.isUnary() && parent.hasValue()) throw new IllegalArgumentException(op+" with left operand");
 
         else if(!op.isUnary() && !parent.hasValue()){//if binary and has no left operand
-            //System.out.println("\t\tSetting left operand for "+op);
             parent.setValue(child);//value of child becomes left operand
-            if(parent.isDone()) throw new IllegalArgumentException(op+" without second operand");//TODO
+            if(parent.isDone()) throw new IllegalArgumentException(op+" without second operand");
             return shortCircuit(parent);
         }
 
-        //System.out.println("\t\tOperating: "+op);
-
         switch(op){
+
+            //TODO: Unary operators may exist in chains, and can be reduced without making a chain of nodes
 
             case POS -> parent.setValue(child.toFloat(),true);
 
@@ -108,26 +132,23 @@ public final class Evaluator{
 
     private static Node shortCircuit(Node node){
 
-        if(!node.hasValue()) throw new IllegalArgumentException("Cannot short-circuit without value");//TODO
+        if(!node.hasValue()) throw new IllegalArgumentException("Cannot short-circuit without value");
         Optional<Operator> optOp = node.getOperator();
-        if(optOp.isEmpty()) throw new IllegalArgumentException("Cannot short-circuit without operator");//TODO
+        if(optOp.isEmpty()) throw new IllegalArgumentException("Cannot short-circuit without operator");
         Operator op = optOp.get();
 
         boolean status = switch(op){
             //Each case must have exclusivity over the rank of the operators mentioned in it.
-            //Operators mentioned together in a case may or may not share rank, but none other should share rank with any of them.
+            //Operators mentioned together in a case may or may not share rank, but others should not share rank with any of them.
 
             case POW -> node.toFloat()==0 || node.toFloat()==1;
-            case MOD, MUL, DIV -> node.toFloat()==0;//these operators may or may not share rank, but none other should share rank with any of them
+            case MOD, MUL, DIV -> node.toFloat()==0;//these operators may or may not share rank, but others should not share rank with any of them
             case AND -> !node.toBool();
             case OR -> node.toBool();
             default -> false;
         };
 
-        if(status){
-            node.reduce();
-            //System.out.println("\t\tShort-circuit "+op);
-        }
+        if(status) node.reduce();
 
         return node;
 
@@ -143,28 +164,22 @@ final class Stack{
 
     private final Deque<Node> stack = new ArrayDeque<>();
     Node peek(){return stack.element();}
-    void push(Node node){
-        //System.out.println("\t\tNode pushed");
-        stack.push(node);
-    }
-    Node pop(){
-        //System.out.println("\t\tNode popped");
-        return stack.pop();
-    }
+    void push(Node node){stack.push(node);}
+    Node pop(){return stack.pop();}
     boolean isEmpty(){return stack.isEmpty();}
 
     Stack(String expression){
         push(new Node(
                 expression
                         .replaceAll("\\s+","")
-                //.replace("--","+")
+                //.replace("-+","-")
+                //.replace("---","-")
                 //.replace("!!!","!")
         ));
     }
 
     Node expand(){
-        if(isEmpty()) throw new NoSuchElementException("Cannot expand empty stack");//TODO
-        //System.out.println("\t\tExpanding subexpression...");
+        if(isEmpty()) throw new NoSuchElementException("Cannot expand empty stack");
         Node node = peek();
         do{
             node = node.next();
@@ -184,21 +199,17 @@ final class Node{
     private Operator operator = null;
     private boolean init = false;
     private float value = 0;
-    private Type type = Type.AMBI;//just in case numeric and boolean values are not allowed to interchange
+    private Type type = Type.AMBI;//because numeric and boolean values are not allowed to interchange
 
     private Node(Queue<String> subexps, Queue<Operator> usedOps, int rank){
         this.subexps = subexps;
         this.usedOps = usedOps;
         this.rank = rank;
-
-        //System.out.println();
-        //System.out.println("Constructed node:");
-        //System.out.println(this);
     }
 
     public Node(String expression){
         expression = disclose(expression);//no null check
-        if(expression.isBlank()) throw new IllegalArgumentException("Expression must not be blank");//TODO
+        if(expression.isBlank()) throw new IllegalArgumentException("Expression must not be blank");
         final int len = expression.length();
         subexps = new ArrayDeque<>(1+len/2);
         usedOps = new ArrayDeque<>(len/2);
@@ -237,12 +248,8 @@ final class Node{
         if(subAt==len) throw new IllegalArgumentException("Expression \""+expression+"\" ended with an operator");
         else subexps.add(expression.substring(subAt));
 
-        if(subexps.isEmpty()) throw new IllegalStateException("Something went wrong");//TODO
+        if(subexps.isEmpty()) throw new IllegalStateException("Something went wrong");
         this.rank = tempRank;
-
-        //System.out.println();
-        //System.out.println("Constructed node: \""+expression+"\"");
-        //System.out.println(this);
     }
 
     private static Optional<Operator> operatorAt(int index, String expression, boolean isUnary){
@@ -281,9 +288,9 @@ final class Node{
             if(c=='(') b++;
             else if(c==')') b--;
 
-            if(b==i) m=b; //number of leading '(' characters
+            if(b==1+i) m=b; //number of leading '(' characters
             if(
-                    b<i //after crossing all leading '(' characters
+                    b<1+i //after crossing all leading '(' characters
                             && len>e //before reaching any trailing ')' characters
                             && m>b //if value of b drops
             ) m=b; //level of redundant outer parentheses
@@ -299,43 +306,33 @@ final class Node{
     public boolean valueEquals(Node other){
         if(other==null || !other.hasValue() || !this.hasValue()) return false;
         return switch(type){
-            case AMBI -> this.getFloat() == other.getFloat();
+            case AMBI -> this.getValue() == other.getValue();
             case BOOL -> this.toBool() == other.toBool();
             case NUM -> this.toFloat() == other.toFloat();
         };
     }
 
-    private float getFloat(){
-        if(!hasValue()) throw new NoSuchElementException("No value present");//TODO
+    private float getValue(){
+        if(!hasValue()) throw new NoSuchElementException("No value present");
         return value;
-    }
-
-    private boolean getBool(){
-        return Math.round(getFloat())!=0;//rounds half up
     }
 
     public float toFloat(){
         if(type==Type.BOOL) throw new NoSuchElementException("Boolean value instead of numeric");
         type = Type.NUM;
-        return getFloat();
+        return getValue();
     }
 
     public boolean toBool(){
         if(type==Type.NUM) throw new NoSuchElementException("Numeric value instead of boolean");
         type = Type.BOOL;
-        return getBool();
+        return Evaluator.floatToInt(getValue())!=0;
     }
 
     public void setValue(float value, boolean setNumeric){
         this.value = value;
         init = true;
         if(setNumeric) type = Type.NUM;
-
-        /*
-        System.out.println("\t\tSet value: "+(
-                type==Type.BOOL? value!=0:value
-        ));
-        //*/
     }
 
     public void setValue(boolean value){
@@ -345,18 +342,17 @@ final class Node{
 
     public void setValue(Node toCopy){
         type = toCopy.type;
-        setValue(toCopy.getFloat(), false);
+        setValue(toCopy.getValue(), false);
     }
 
     public Optional<Operator> getOperator(){
-        if(operator!=null && operator.rank!=this.rank) throw new IllegalStateException("Node operator does not match rank");//TODO
+        if(operator!=null && operator.rank!=this.rank) throw new IllegalStateException("Node operator does not match rank");
         else return Optional.ofNullable(operator);
     }
 
     private void setOperator(Operator opToSet){
-        if(opToSet.rank!=this.rank) throw new IllegalArgumentException("Operator does not match node rank");//TODO
+        if(opToSet.rank!=this.rank) throw new IllegalArgumentException("Operator does not match node rank");
         else operator=opToSet;
-        //System.out.println("\t\tSet operator: "+opToSet);
     }
 
     public void removeOperator(){
@@ -365,71 +361,114 @@ final class Node{
 
     public boolean isDone(){
         if(!subexps.isEmpty()) return false;
-        else if(!hasValue()) throw new IllegalStateException("Done, but has no value");//TODO
+        else if(!hasValue()) throw new IllegalStateException("Done, but has no value");
         else return true;
     }
 
     public boolean isTerm(){
         if(isDone()) return false;
 
-        boolean oneSub = subexps.size()==1;//may yet have a single unary operator
+        boolean oneSub = subexps.size()==1;//may yet have one or more unary operators
         boolean noOps = operator==null && (usedOps==null || usedOps.isEmpty());
         boolean noRank = rank<0;
 
-        if(oneSub && noOps) return true;//possible even if originally not a term, i.e., has a value
-        else if(noRank) throw new IllegalStateException("Not a term, yet has no rank");//TODO
+        if(oneSub && noOps) return true;
+        else if(noRank) throw new IllegalStateException("Not a term, yet has no rank");
         else return false;
     }
 
     public String getTerm(){
-        if(!isTerm()) throw new NoSuchElementException("Not a term");//TODO
+        if(!isTerm()) throw new NoSuchElementException("Not a term");
         else return subexps.remove();
     }
 
-    public Node next(){//TODO: write comments
-        if(isDone()) throw new NoSuchElementException("Done node has no next");//TODO
-        if(isTerm()) throw new NoSuchElementException("Term node has no next");//TODO
-        //else if(operator==null && (usedOps==null || usedOps.isEmpty())) throw new IllegalStateException("Not a term, yet no operators");//TODO
+    public Node next(){
+
+        if(isDone()) throw new NoSuchElementException("Done node has no next");
+        if(isTerm()) throw new NoSuchElementException("Term node has no next");
 
         Queue<String> subSubs = new ArrayDeque<>(subexps.size());
         Queue<Operator> subOps = new ArrayDeque<>(usedOps.size());
         int subRank = -1;
 
-        subSubs.add(subexps.remove());//throws
+        if(rank==0){
+            if(hasValue() || operator!=null || subexps.size()!=1) throw new IllegalStateException("Something went wrong");
+
+            //TODO: We can traverse through and reduce the operator queue before creating the next node
+
+            setOperator(usedOps.remove());
+
+            if(usedOps.isEmpty()) return new Node(subexps.remove());
+
+            do subOps.add(usedOps.remove()); while(!usedOps.isEmpty());
+            subSubs.add(subexps.remove());
+
+            return new Node(
+                    subSubs,
+                    subOps,
+                    this.rank//==0
+            );
+
+        }
+
+        //going forward with rank>0, i.e., operator must be binary
+
+            /*
+            SCENARIO 0. !hasValue() && operator==null: Expect (left) operand, then operator.
+                Happens the first time next() is called
+
+            SCENARIO 1. !hasValue() && operator!=null: Cannot already have operator without left operand. Error.
+                Should never happen
+
+            SCENARIO 2. hasValue() && operator!=null: Expect (right) operand.
+                Happens when the binary operator has one operand and needs the other
+
+            SCENARIO 3. hasValue() && operator==null: Expect operator, then (right) operand.
+                Happens when a previous binary operator is removed after operation
+            */
+
+        //SCENARIO 1:
+        if(!hasValue() && operator!=null) throw new IllegalStateException("Something went wrong");
+        //SCENARIO 3:
+        if(hasValue() && operator==null) setOperator(usedOps.remove());//may throw if op does not match rank
+
+        subSubs.add(subexps.remove());//can it throw?
 
         while(!usedOps.isEmpty()){
+
             Operator op = usedOps.element();
 
-            if(op.rank > this.rank) throw new IllegalStateException("Operator rank later than node rank");//TODO
+            if(op.rank > this.rank) throw new IllegalStateException("Operator rank later than node rank");
 
-            else if(op.rank == this.rank){
-                if(operator==null) setOperator(usedOps.remove());
-                if(op.isUnary()) while(!usedOps.isEmpty() && usedOps.element().isUnary()){
-                    if(subRank < 0) subRank = 0;
-                    subOps.add(usedOps.remove());
-                }
+            if(op.rank == this.rank){
+                //SCENARIO 0:
+                if(operator == null) setOperator(usedOps.remove());
                 break;
             }
 
-            else{
-                if(subRank < op.rank) subRank = op.rank;
+            subOps.add(usedOps.remove());
+            if(subRank < op.rank) subRank = op.rank;
 
-                if(!op.isUnary()){
-                    if(subexps.isEmpty()) throw new IllegalArgumentException(op+" without second operand");//TODO
-                    else subSubs.add(subexps.remove());
-                }
-
-                do subOps.add(usedOps.remove()); while(!usedOps.isEmpty() && usedOps.element().isUnary());
+            if(op.isUnary()){//if one unary is found, keep adding chain of adjacent unaries until binary or end
+                while(!usedOps.isEmpty() && usedOps.element().isUnary()) subOps.add(usedOps.remove());
             }
+
+            else{//if binary is found, add another subexpression
+                if(subexps.isEmpty()) throw new IllegalArgumentException(op+" without second operand");
+                else subSubs.add(subexps.remove());
+            }
+
         }
 
+        if(operator==null || subSubs.isEmpty()) throw new IllegalStateException("Something went wrong");
+
         return (subOps.isEmpty() && subSubs.size()==1)?
-                new Node(subSubs.element())://so that a raw subexpression is not mistaken for a term
+                new Node(subSubs.remove())://so that a raw subexpression is not mistaken for a term
                 new Node(subSubs, subOps, subRank);
     }
 
     public void reduce(){
-        if(!hasValue()) throw new IllegalStateException("Attempt to reduce node without value");//TODO
+        if(!hasValue()) throw new IllegalStateException("Attempt to reduce node without value");
         subexps.clear();
         usedOps.clear();
         removeOperator();
@@ -458,34 +497,6 @@ final class Node{
 
 enum Operator{
 
-    /*
-    TODO: evaluate "false == +1/-2^-4@+2 != 2"
-        The (in)equality operators "==" and "!=" have equal precedence and are left associative,
-        so this expression is valid only if boolean and numeric values are comparable (like in C).
-        In that case, booleans are treated as numerics for numeric operators where "false"="0" and "true"="1",
-        and vice versa for boolean operators ("&&", "||", "!") where "0"="false" and all else is "true".
-        Therefore, the "false" value is first turned into "0".
-            => "0 == +1/-2^-4@+2 != 2"
-        A human can stop right here and declare the answer to be "true", because the output of any "=="
-        is either "true" = "1" or "false" = "0", so following it with "!= 2" will always evaluate to "true".
-        But if we cannot look ahead, then we must now evaluate the right hand operand of the "==", which is:
-            "-1/-2^-4@+2-2"
-            => "(-1)/(-2)^(-4)@(+2)-2"
-            => "(-1)/((-2)^(-4))@(+2)-2"
-            => "(-1)/((sixteenth)@(+2))-2"
-            => "((-1)/(-4))-2"
-            => "(quarter)-2"
-            => "-1.75"
-        So the entire expression has been reduced to:
-            "0 == -1.75 != 2"
-            => "(0 == -1.75) != 2"
-            => "false != 2"
-            => "0 != 2"
-            => "true" (or "1" if necessary)
-        On the other hand, if numeric and boolean values are not allowed be interconverted, the original
-        expression is strictly invalid and should be rejected.
-    */
-
     //Note about the order of declaration here: If the sign of one operator is a substring of another and both operators are of same type (unary/binary),
     //then the one with the smaller sign must appear later in the checking order. For example, "<" should not be matched before "<=", or ">" before ">=".
 
@@ -499,7 +510,6 @@ enum Operator{
 
     LOG("@", 2),//"+4@-2" means "log +4 with base -2" and evals to "2"
 
-    //for the short-circuit, these 3 operations should have any other operations with same precedences
     MOD("%", 3),
 
     MUL("*", 4),
