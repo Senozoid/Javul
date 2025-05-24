@@ -131,49 +131,69 @@ public final class Evaluator{
 
     private static double logarithm(double target, double base){
 
-        final double ZERO_BASE = 1.5717277847E-162;
+        double result;
 
-        if(target>0 && base>ZERO_BASE) return Math.log(target)/Math.log(base);
+        if(target>0 && base>0){
+            result = Math.log(target)/Math.log(base);
+            if(Double.isFinite(result)) return result;
+        }
 
-        else if(target==0 || Math.abs(base)<=ZERO_BASE) throw new ArithmeticException("Logarithm with zero");
+        else if(target==0 || base==0) throw new ArithmeticException("Logarithm with zero");
 
         else if(base==1 || base==-1) throw new ArithmeticException("Logarithm with base (+/-) one");
 
         else if(target==1) return 0;
 
+        else if(target==-1) throw new ArithmeticException("Logarithm of negative one");
+
         else if(!Double.isFinite(target) || !Double.isFinite(base)) throw new ArithmeticException("Logarithm with invalid value(s)");
 
         else if(target==base) return 1;
 
-        else if(base>0) throw new ArithmeticException("Logarithm with positive base and negative target");
+        else if(base>0) throw new ArithmeticException("Logarithm with positive base of negative number");
 
+            ///*
+        else if(target>0){
+            result = Math.log(target)/Math.log(-base);
+            if(result%2 < 1E-12) return result;
+        }
+
+        else{
+            result = Math.log(-target)/Math.log(-base);
+            if(Math.abs(result%2-1) < 1E-12) return result;
+        }
+        //*/
+
+        /*
+        //binary search (order of milliseconds)
         long left=1, right=Long.MAX_VALUE/2;
-        double error=1;
 
-        while(right > left){
+        do{
 
-            long n = left+(right-left+(error>0?1:0))/2;
+            long n = left+(right-left)/2;
 
             long power = 2*n+(target>0?0:1);//if target pos, try evens, else odds
 
-            double result = Math.pow(base, power);
+            result = Math.pow(base, power);
             if(target<0 && Double.isInfinite(result)) result = Double.NEGATIVE_INFINITY;//large odd powers of large negative numbers return positive infinity, which is wrong
 
-            error = target - result;
+            double error = target - result;
             if(target<0) error = -error;
 
             if(Math.abs(error) <= Double.MIN_VALUE) return power;
 
             if(base < -1){//result increases in magnitude with power
-                if(error > 0) left = n;//target is ahead in magnitude, increase power
-                else right = n;
+                if(error > 0) left = n+1;//target is ahead in magnitude, increase power
+                else right = n-1;
             }
             else{//result increases in magnitude against power
-                if(error > 0) right = n;//target is ahead in magnitude, decrease power
-                else left = n;
+                if(error > 0) right = n-1;//target is ahead in magnitude, decrease power
+                else left = n+1;
             }
 
-        }
+        }while(right >= left);
+        //*/
+
         throw new ArithmeticException("Logarithm not possible");
     }
 
