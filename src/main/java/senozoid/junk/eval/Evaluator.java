@@ -289,6 +289,14 @@ final class Node{
         */
 
         //if numeric literal
+        /*
+        TODO:
+            1. Manually handle presence of radix in numeric literals (allowed in Java ints, but not fully supported by any parse or decode methods):
+                1.1. Octals denoted by "0o" instead of leading 0.
+                1.2. If radix present, assume int, throw exception if wrong (only hex allowed in Java floats, but not in parse methods).
+            2. Catch and ignore 'L'/'l' suffix for long literals, even though long values are not fully supported.
+            3. Do not allow underscores in numeric literals (allowed in Java, but not in parse methods).
+        */
         try{
             setValue(Double.parseDouble(expression),true);
         }catch(NumberFormatException ignored){}
@@ -345,7 +353,7 @@ final class Node{
             else return;
         }
 
-        if(expression.matches("(\\d+\\.?\\d*|\\.\\d+)[eE]|\\d+[fFdD]")){
+        if(expression.matches("(\\d+\\.?\\d*|\\.\\d+)[eE]|\\d+[fFdD]")){//when sign of exponent is misinterpreted as an operator
             throw new IllegalArgumentException(
                     "Floating point literal with signed exponent must be enclosed in parentheses: "+expression
             );
