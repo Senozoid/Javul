@@ -1,6 +1,7 @@
 package senozoid.junk.eval;
 
 import java.util.*;
+import java.util.regex.Pattern;
 
 /*
 TODO: write docs explaining quirks and possibly unexpected behaviour, some of which are:
@@ -155,12 +156,12 @@ public final class Evaluator{
             ///*
         else if(target>0){
             result = Math.log(target)/Math.log(-base);
-            if(result%2 < 1E-12) return result;
+            if(result%2 < Constants.TINY) return result;
         }
 
         else{
             result = Math.log(-target)/Math.log(-base);
-            if(Math.abs(result%2-1) < 1E-12) return result;
+            if(Math.abs(result%2-1) < Constants.TINY) return result;
         }
         //*/
 
@@ -235,14 +236,14 @@ final class Stack{
     Node pop(){return stack.pop();}
     boolean isEmpty(){return stack.isEmpty();}
 
-    Stack(String expression){
-        push(new Node(
-                expression
-                        .replaceAll("\\s+","")
+    Stack(String raw){
+        Slice compact = new Slice(
+                raw.replaceAll("\\s+","")
                 //.replace("-+","-")
                 //.replace("---","-")
                 //.replace("!!!","!")
-        ));
+        );
+        push(new Node(compact));
     }
 
     Node expand(){
@@ -259,24 +260,29 @@ final class Stack{
 
 final class Node{
 
-    final private Queue<String> subexps;
-    final private Queue<Operator> usedOps;
-    final private int rank;
+    private static final Pattern FLOAT_PATTERN = Pattern.compile("(?:\\d+\\.?\\d*|\\.\\d+)(?:[eE][+-]?\\d+)?[fFdD]?");//sign-stripped number without radix
+    private static final Pattern SPLIT_PATTERN = Pattern.compile("(?:\\d+\\.?\\d*|\\.\\d+)[eE]|\\d+[fFdD]");//incomplete floating point literal
+    private static final Pattern RADIX_PATTERN = Pattern.compile("0[boxBOX]\\d+");//sign-stripped integer with radix
+    private static final Pattern PAREN_PATTERN = Pattern.compile("^\\(+.*\\)+$");//expression enclosed in parentheses
+
+    private final Queue<Slice> subexps; // Stores index bounds
+    private final Queue<Operator> usedOps;
+    private final int rank;
 
     private Operator operator = null;
     private boolean init = false;
     private double value = 0;
     private Type type = Type.AMBI;//because numeric and boolean values are not allowed to interchange
 
-    private Node(Queue<String> subexps, Queue<Operator> usedOps, int rank){
+    private Node(Queue<Slice> subexps, Queue<Operator> usedOps, int rank){
         this.subexps = subexps;
         this.usedOps = usedOps;
         this.rank = rank;
     }
 
-    public Node(String expression){
-        expression = disclose(expression);//no null check
-        if(expression.isBlank()) throw new IllegalArgumentException("Expression must not be blank");
+    public Node(Slice original) {
+        final Slice expression = disclose(original);//no null check
+        if(expression.isEmpty()) throw new IllegalArgumentException("Expression must not be blank");
 
         final int len = expression.length();
         subexps = new ArrayDeque<>(1+len/2);
@@ -288,22 +294,45 @@ final class Node{
         but in that case, while efficiency will increase, floating point literals with signed exponent will not be supported.
         */
 
-        //if numeric literal
         /*
-        TODO:
+        TODO: Document these behaviours:
             1. Manually handle presence of radix in numeric literals (allowed in Java ints, but not fully supported by any parse or decode methods):
                 1.1. Octals denoted by "0o" instead of leading 0.
                 1.2. If radix present, assume int, throw exception if wrong (only hex allowed in Java floats, but not in parse methods).
-            2. Catch and ignore 'L'/'l' suffix for long literals, even though long values are not fully supported.
+            2. Do not recognise 'L'/'l' suffix for long literals, as long values are not fully supported.
             3. Do not allow underscores in numeric literals (allowed in Java, but not in parse methods).
         */
-        try{
-            setValue(Double.parseDouble(expression),true);
-        }catch(NumberFormatException ignored){}
+
+        //if numeric literal without radix
+        if(expression.matchesPattern(FLOAT_PATTERN)){
+            final String valStr = expression.toString();
+            try{
+                setValue(Double.parseDouble(valStr),true);
+            } catch(NumberFormatException ignored){
+                //throw new IllegalArgumentException("Invalid number format: \""+valStr+"\"");
+            }
+        }
+
+        //if integer literal with radix
+        else if(expression.matchesPattern(RADIX_PATTERN)){
+            final String valStr = expression.subSlice(2).toString();
+            final char radChar = expression.charAt(1);
+            final int radix = switch(radChar){
+                case 'b','B' -> 2;
+                case 'o','O' -> 8;
+                case 'x','X' -> 16;
+                default -> throw new IllegalStateException("Unexpected radix specifier: \"0"+radChar+"\"");
+            };
+            try{
+                setValue(Integer.parseInt(valStr,radix), true);
+            } catch(NumberFormatException ignored){
+                //throw new IllegalArgumentException("Invalid (base-"+radix+") integer format: \""+valStr+"\"");
+            }
+        }
 
         //if boolean literal
-        if("true".equalsIgnoreCase(expression)) setValue(true);
-        else if("false".equalsIgnoreCase(expression)) setValue(false);
+        if(expression.contentEqualsIgnoreCase("true")) setValue(true);
+        else if(expression.contentEqualsIgnoreCase("false")) setValue(false);
 
         //if literal
         if(hasValue()){
@@ -333,7 +362,7 @@ final class Node{
             if(optOp.isEmpty()) continue;//not an operator
             Operator foundOp = optOp.get();
 
-            if(!foundOp.isUnary()) subexps.add(expression.substring(subAt,i));//add left operand
+            if(!foundOp.isUnary()) subexps.add(expression.subSlice(subAt,i));//add left operand
             usedOps.add(foundOp);
             if(tempRank < foundOp.rank) tempRank = foundOp.rank;
             subAt=i+foundOp.sign.length();
@@ -341,7 +370,7 @@ final class Node{
 
         }
         if(subAt==len) throw new IllegalArgumentException("Expression \""+expression+"\" ended with an operator");
-        else subexps.add(expression.substring(subAt));
+        else subexps.add(expression.subSlice(subAt));
         this.rank = tempRank;
 
         if(isDone()) throw new IllegalStateException("Node could not be created");
@@ -353,21 +382,21 @@ final class Node{
             else return;
         }
 
-        if(expression.matches("(\\d+\\.?\\d*|\\.\\d+)[eE]|\\d+[fFdD]")){//when sign of exponent is misinterpreted as an operator
+        if(expression.matchesPattern(SPLIT_PATTERN)) {//when sign of exponent is misinterpreted as an operator
             throw new IllegalArgumentException(
-                    "Floating point literal with signed exponent must be enclosed in parentheses: "+expression
+                    "Floating point literal with signed exponent must be enclosed in parentheses: \""+expression+"\""
             );
         }
 
         //identifier
-        throw new IllegalStateException("Cannot fetch value from identifier \""+expression+"\"");//TODO: remove placeholder and fetch value from game-specific identifier
+        throw new IllegalStateException("Cannot fetch value from identifier \""+expression+"\""); //TODO: remove placeholder and fetch value from game-specific identifier
     }
 
-    private static Optional<Operator> operatorAt(int index, String expression, boolean isUnary){
+    private static Optional<Operator> operatorAt(int index, Slice expression, boolean isUnary){
         Operator foundOp = null;
         Operator wrongOp = null;
 
-        for(Operator op:Operator.values()){
+        for(Operator op:Operator.CACHED_VALUES){
             if(!expression.regionMatches(index,op.sign,0,op.sign.length())) continue;
             else if(isUnary != op.isUnary()){
                 wrongOp = op;
@@ -386,8 +415,8 @@ final class Node{
         return Optional.ofNullable(foundOp);
     }
 
-    private static String disclose(String enclosed){
-        if(!enclosed.matches("^\\(+.*\\)+$")) return enclosed;
+    private static Slice disclose(Slice enclosed){
+        if(!enclosed.matchesPattern(PAREN_PATTERN)) return enclosed;
 
         final int len=enclosed.length();
         int b=1, i=0, m=b;
@@ -407,19 +436,19 @@ final class Node{
             ) m=b; //level of redundant outer parentheses
         }while(b>0);
 
-        return m>0?enclosed.substring(m,len-m):enclosed;
+        return m>0?enclosed.subSlice(m,len-m):enclosed;
     }
 
     public boolean hasValue(){
         return init;
     }
 
-    public boolean valueEquals(Node other){
-        if(other==null || !other.hasValue() || !this.hasValue()) return false;
-        return switch(type){
-            case AMBI -> this.getValue() == other.getValue();
+    public boolean valueEquals(Node other) {
+        if (other == null || !other.hasValue() || !this.hasValue()) return false;
+        return switch (type) {
+            case AMBI -> Math.abs(this.getValue()-other.getValue()) < Constants.TINY;
             case BOOL -> this.toBool() == other.toBool();
-            case NUM -> this.toNum() == other.toNum();
+            case NUM -> Math.abs(this.toNum()-other.toNum()) < Constants.TINY;
         };
     }
 
@@ -492,7 +521,7 @@ final class Node{
 
         if(isDone()) throw new NoSuchElementException("Done node has no next");
 
-        Queue<String> subSubs = new ArrayDeque<>(subexps.size());
+        Queue<Slice> subSubs = new ArrayDeque<>(subexps.size());
         Queue<Operator> subOps = new ArrayDeque<>(usedOps.size());
         int subRank = -1;
 
@@ -602,8 +631,8 @@ final class Node{
 
 enum Operator{
 
-    //Note about the order of declaration here: If the sign of one operator is a substring of another and both operators are of same type (unary/binary),
-    //then the one with the smaller sign must appear later in the checking order. For example, "<" should not be matched before "<=", or ">" before ">=".
+    //Note about the order of declaration here: If the symbol for one operator is a substring of another and both operators are of same type (unary/binary),
+    //then the one with the smaller symbol must appear later in the checking order. For example, "<" should not be matched before "<=", or ">" before ">=".
 
     //unary operators:
     POS("+", 0),
@@ -640,6 +669,8 @@ enum Operator{
     public final String sign;
     public final int rank;
 
+    public static final Operator[] CACHED_VALUES = values();
+
     Operator(String sign, int rank){
         this.sign = sign;
         this.rank = rank;
@@ -655,3 +686,107 @@ enum Operator{
     }
 }
 
+//TODO: Verify that the slice functionality for lists can be achieved using Collections.unmodifiableList(list.subList(start,end));
+
+final class Slice{ //acts as a substring-like view without actually allocating a new String instance
+
+    //TODO: Add exception messages and javadoc comments
+
+    private final String source;
+    private final int start;
+    private final int end;
+    private final int length;
+
+    public Slice(String source, int start, int end){
+        if(start==end) {
+            this.source = "";//unique literal lives in pool, helps avoid unnecessary null risks
+            this.start = this.end = this.length = 0;
+            return;
+        }
+        else if(start<0 || end>source.length()) throw new IndexOutOfBoundsException();//TODO: Add message
+        else if(end<start) throw new IllegalArgumentException();//TODO: Add message
+        else {
+            this.source = source;
+            this.start = start;
+            this.end = end;
+            this.length = end-start;
+        }
+    }
+
+    public Slice(String source, int start){
+        this(source, start, source.length());
+    }
+
+    public Slice(String source){
+        this(source, 0);
+    }
+
+    public int length(){
+        return length;
+    }
+
+    public char charAt(int index){
+        if(index<0 || index>(length-1)) throw new IndexOutOfBoundsException();//TODO: Add message
+        return source.charAt(start+index);
+    }
+
+    public boolean isEmpty(){
+        return length==0;
+    }
+
+    public Slice subSlice(int beginIndex, int endIndex){
+
+        if(beginIndex<0 || endIndex>length) throw new IndexOutOfBoundsException();//TODO: Add message
+        else if(endIndex<beginIndex) throw new IllegalArgumentException();//TODO: Add message
+
+        else if(beginIndex==0 && endIndex==length) return this;//must remain an immutable class
+        else return new Slice(
+                this.source,
+                this.start+beginIndex,
+                this.start+endIndex
+            );
+    }
+
+    public Slice subSlice(int beginIndex){
+        return subSlice(beginIndex, this.length);
+    }
+
+    public boolean regionMatches(int thsOffset, String other, int othOffset, int regLen){
+        return source.regionMatches(this.start+thsOffset, other, othOffset, regLen);
+    }
+
+    private boolean contentEquals(boolean ignoreCase, String other, int offset){
+        if(this.isEmpty()){
+            if(other==null) return offset==0;
+            else return offset==other.length();
+        }
+        return source.regionMatches(ignoreCase, this.start, other, offset, length);
+    }
+
+    public boolean contentEquals(String other){
+        return contentEquals(false, other, 0);
+    }
+
+    public boolean contentEqualsIgnoreCase(String other){
+        return contentEquals(true, other, 0);
+    }
+
+    public boolean contentEquals(Slice other){
+        if(this.length != other.length) return false;
+        else if(this.isEmpty()) return true;
+        else return contentEquals(false, other.source, other.start);
+    }
+
+    public boolean matchesPattern(Pattern pattern){
+        return pattern.matcher(source).region(start, end).matches();
+    }
+
+    @Override
+    public String toString(){
+        return source.substring(start, end);
+    }
+}
+
+final class Constants{
+    public static final double TINY = 1E-9;
+}
