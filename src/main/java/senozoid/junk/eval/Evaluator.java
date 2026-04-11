@@ -132,14 +132,9 @@ public final class Evaluator{
 
     private static double logarithm(double target, double base){
 
-        double result;
+        final double result;
 
-        if(target>0 && base>0){
-            result = Math.log(target)/Math.log(base);
-            if(Double.isFinite(result)) return result;
-        }
-
-        else if(target==0 || base==0) throw new ArithmeticException("Logarithm with zero");
+        if(target==0 || base==0) throw new ArithmeticException("Logarithm with zero");
 
         else if(base==1 || base==-1) throw new ArithmeticException("Logarithm with base (+/-) one");
 
@@ -151,17 +146,24 @@ public final class Evaluator{
 
         else if(target==base) return 1;
 
+        else if(target>0 && base>0){
+            result = Math.log(target)/Math.log(base);
+            if(Double.isFinite(result)) return result;
+        }
+
         else if(base>0) throw new ArithmeticException("Logarithm with positive base of negative number");
 
             ///*
         else if(target>0){
             result = Math.log(target)/Math.log(-base);
-            if(result%2 < Constants.TINY) return result;
+            final long rounded = Math.round(result);
+            if(Math.abs(result-rounded)<Constants.TINY && rounded%2==0) return rounded;
         }
 
         else{
             result = Math.log(-target)/Math.log(-base);
-            if(Math.abs(result%2-1) < Constants.TINY) return result;
+            final long rounded = Math.round(result);
+            if(Math.abs(result-rounded)<Constants.TINY && Math.abs(rounded)%2==1) return rounded;
         }
         //*/
 
@@ -209,8 +211,8 @@ public final class Evaluator{
             //Each case must have exclusivity over the rank of the operators mentioned in it.
             //Operators mentioned together in a case may or may not share rank, but others should not share rank with any of them.
 
-            case POW -> node.toNum()==0 || node.toNum()==1;
-            case MUL/*, DIV, MOD*/ -> node.toNum()==0;//these operators may or may not share rank, but others should not share rank with any of them
+            case POW -> node.toNum()==1;
+            case MUL -> node.toNum()==0;
             case AND -> !node.toBool();
             case OR -> node.toBool();
             default -> false;
@@ -260,9 +262,10 @@ final class Stack{
 
 final class Node{
 
-    private static final Pattern FLOAT_PATTERN = Pattern.compile("(?:\\d+\\.?\\d*|\\.\\d+)(?:[eE][+-]?\\d+)?[fFdD]?");//sign-stripped number without radix
-    private static final Pattern SPLIT_PATTERN = Pattern.compile("(?:\\d+\\.?\\d*|\\.\\d+)[eE]|\\d+[fFdD]");//incomplete floating point literal
-    private static final Pattern RADIX_PATTERN = Pattern.compile("0[boxBOX]\\d+");//sign-stripped integer with radix
+    //TODO: Thoroughly verify these patterns analytically as well as with exhaustive tests:
+    private static final Pattern FLOAT_PATTERN = Pattern.compile("[+-]?(?:\\d+\\.?\\d*|\\.\\d+)(?:[eE][+-]?\\d+)?[fFdD]?");//decimal floating point literal
+    private static final Pattern SPLIT_PATTERN = Pattern.compile("[+-]?(?:\\d+\\.?\\d*|\\.\\d+)[eE]|[+-]?\\d+[fFdD]");//incomplete decimal floating point literal
+    private static final Pattern RADIX_PATTERN = Pattern.compile("0[boxBOX][a-fA-F\\d]+");//sign-stripped integer with radix
     private static final Pattern PAREN_PATTERN = Pattern.compile("^\\(+.*\\)+$");//expression enclosed in parentheses
 
     private final Queue<Slice> subexps; // Stores index bounds
@@ -297,13 +300,14 @@ final class Node{
         /*
         TODO: Document these behaviours:
             1. Manually handle presence of radix in numeric literals (allowed in Java ints, but not fully supported by any parse or decode methods):
-                1.1. Octals denoted by "0o" instead of leading 0.
+                1.1. Support only binary, hex, and octals (denoted by "0o" instead of leading 0).
                 1.2. If radix present, assume int, throw exception if wrong (only hex allowed in Java floats, but not in parse methods).
             2. Do not recognise 'L'/'l' suffix for long literals, as long values are not fully supported.
-            3. Do not allow underscores in numeric literals (allowed in Java, but not in parse methods).
+            3. Floating point literals can be in only decimal format (no hex, or 'P').
+            4. Do not allow underscores in numeric literals (allowed in Java, but not in parse methods).
         */
 
-        //if numeric literal without radix
+        //if decimal floating point literal
         if(expression.matchesPattern(FLOAT_PATTERN)){
             final String valStr = expression.toString();
             try{
@@ -313,7 +317,7 @@ final class Node{
             }
         }
 
-        //if integer literal with radix
+        //if sign-stripped integer literal with radix
         else if(expression.matchesPattern(RADIX_PATTERN)){
             final String valStr = expression.subSlice(2).toString();
             final char radChar = expression.charAt(1);
@@ -760,6 +764,7 @@ final class Slice{ //acts as a substring-like view without actually allocating a
             if(other==null) return offset==0;
             else return offset==other.length();
         }
+        else if(this.length != other.length()-offset) return false;
         return source.regionMatches(ignoreCase, this.start, other, offset, length);
     }
 
@@ -788,5 +793,5 @@ final class Slice{ //acts as a substring-like view without actually allocating a
 }
 
 final class Constants{
-    public static final double TINY = 1E-9;
+    public static final double TINY = 1E-10;
 }
