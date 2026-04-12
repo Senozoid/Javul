@@ -4,7 +4,7 @@ import java.util.*;
 import java.util.regex.Pattern;
 
 /*
-TODO: write docs explaining quirks and possibly unexpected behaviour, some of which are:
+TODO: write docs explaining current quirks and possibly unexpected behaviour, some of which are:
     1. There is no support for assignment operators, as handling identifiers is left up to you. To implement
         handling of identifiers, see Node class constructor with a single String parameter.
         Example 1 -> By default, "2++2" is a valid expression, and equivalent to "2+(+2)".
@@ -16,20 +16,23 @@ TODO: write docs explaining quirks and possibly unexpected behaviour, some of wh
     4. All binary operators of equal precedence are left associative.
         Example 1 -> "x^y^z" is equivalent to "(x^y)^z", and not "x^(y^z)".
         Example 2 -> "24 / 3 / 4" evaluates to 2, and not 32.
-    5. The possibility exists of allowing identifiers to be interpreted as either numeric or boolean
+    5. By default, the binary modulo (%) operation is given higher precedence than division and multiplication,
+        but changing this is as simple as changing a single value, i.e., rank of Operator#MOD.
+        Example 1 -> By default, "8 / 8 % 6 * 2" is equivalent to "8 / (8 % 6) * 2".
+    6. Binary, octal, hexadecimal integer literals are supported with radix specified as "0b", "0o", "0x"
+        respectively. Underscores, non-decimal floating point literals, and 'L' suffixes are not supported.
+        Example 1 -> "0b1111==0xF" evaluates to true.
+    7. The possibility exists of allowing identifiers to be interpreted as either numeric or boolean
         operands (like int in C), but each operation takes and produces values of a particular type, and the
         two different types of value are not interconvertible or comparable (unlike int in C). To change this,
         see usages of field Node#type.
         Example 1 -> "1==1==true" is a valid expression, but "true==1==1" is not.
-    6. During numeric evaluation, intermediate values are stored as double precision type and the final result
-        is rounded (half up) to int, throwing an exception in case of overflow or underflow. To change this,
-        see usages of field Node#value and method Evaluator#floatToInt. If you allow numeric values to be
-        interpreted as booleans, the boolean values are derived also by first rounding to int.
+    8. During numeric evaluation, intermediate values are stored as double precision type. If you allow
+        numeric values to be interpreted as booleans, the boolean values are derived by first rounding (half up)
+        to int, throwing an exception in case of overflow or underflow. To change these, see usages of
+        field Node#value, method Evaluator#floatToInt, and method Node#toBool.
         Example 1 -> "7/2==3.5" evaluates to true, but numeric evaluation of "7/2" results in 4.
         Example 2 -> If numeric values are made comparable to booleans, then "-0.5==false" evaluates to true.
-    7. By default, the binary modulo (%) operation is given higher precedence than division and multiplication,
-        but changing this is as simple as changing a single value, i.e., rank of Operator#MOD.
-        Example 1 -> By default, "8 / 8 % 6 * 2" is equivalent to "8 / (8 % 6) * 2".
     ...
     Most of these quirks can be avoided by simply using parentheses, regardless of precedence.
 */
@@ -40,8 +43,12 @@ public final class Evaluator{
         return Math.toIntExact(Math.round(original));//if rounded half up
     }
 
+    public static double evalNum(String expression){
+        return evaluate(expression).toNum();
+    }
+
     public static int evalInt(String expression){
-        return floatToInt(evaluate(expression).toNum());
+        return floatToInt(evalNum(expression));
     }
 
     public static boolean evalBool(String expression){
@@ -283,7 +290,7 @@ final class Node{
         this.rank = rank;
     }
 
-    public Node(Slice original) {
+    public Node(Slice original){
         final Slice expression = disclose(original);//no null check
         if(expression.isEmpty()) throw new IllegalArgumentException("Expression must not be blank");
 
@@ -295,16 +302,6 @@ final class Node{
         /*
         The following portion that checks whether the expression is a literal, can be moved down to be just above the identifier-fetch,
         but in that case, while efficiency will increase, floating point literals with signed exponent will not be supported.
-        */
-
-        /*
-        TODO: Document these behaviours:
-            1. Manually handle presence of radix in numeric literals (allowed in Java ints, but not fully supported by any parse or decode methods):
-                1.1. Support only binary, hex, and octals (denoted by "0o" instead of leading 0).
-                1.2. If radix present, assume int, throw exception if wrong (only hex allowed in Java floats, but not in parse methods).
-            2. Do not recognise 'L'/'l' suffix for long literals, as long values are not fully supported.
-            3. Floating point literals can be in only decimal format (no hex, or 'P').
-            4. Do not allow underscores in numeric literals (allowed in Java, but not in parse methods).
         */
 
         //if decimal floating point literal
@@ -319,7 +316,7 @@ final class Node{
 
         //if sign-stripped integer literal with radix
         else if(expression.matchesPattern(RADIX_PATTERN)){
-            final String valStr = expression.subSlice(2).toString();
+            final String valStr = expression.subSliceToString(2);
             final char radChar = expression.charAt(1);
             final int radix = switch(radChar){
                 case 'b','B' -> 2;
@@ -328,7 +325,7 @@ final class Node{
                 default -> throw new IllegalStateException("Unexpected radix specifier: \"0"+radChar+"\"");
             };
             try{
-                setValue(Integer.parseInt(valStr,radix), true);
+                setValue(Long.parseLong(valStr,radix), true);
             } catch(NumberFormatException ignored){
                 //throw new IllegalArgumentException("Invalid (base-"+radix+") integer format: \""+valStr+"\"");
             }
@@ -373,7 +370,7 @@ final class Node{
             i=subAt-1;
 
         }
-        if(subAt==len) throw new IllegalArgumentException("Expression \""+expression+"\" ended with an operator");
+        if(subAt==len) throw new IllegalArgumentException("Expression \""+expression+"\" ends with an operator");
         else subexps.add(expression.subSlice(subAt));
         this.rank = tempRank;
 
@@ -386,7 +383,7 @@ final class Node{
             else return;
         }
 
-        if(expression.matchesPattern(SPLIT_PATTERN)) {//when sign of exponent is misinterpreted as an operator
+        if(expression.matchesPattern(SPLIT_PATTERN)){//when sign of exponent is misinterpreted as an operator
             throw new IllegalArgumentException(
                     "Floating point literal with signed exponent must be enclosed in parentheses: \""+expression+"\""
             );
@@ -447,9 +444,9 @@ final class Node{
         return init;
     }
 
-    public boolean valueEquals(Node other) {
-        if (other == null || !other.hasValue() || !this.hasValue()) return false;
-        return switch (type) {
+    public boolean valueEquals(Node other){
+        if(other==null || !other.hasValue() || !this.hasValue()) return false;
+        return switch(type){
             case AMBI -> Math.abs(this.getValue()-other.getValue()) < Constants.TINY;
             case BOOL -> this.toBool() == other.toBool();
             case NUM -> Math.abs(this.toNum()-other.toNum()) < Constants.TINY;
@@ -534,7 +531,7 @@ final class Node{
 
             //TODO: We can traverse through and reduce the operator queue before creating the next node
 
-            setOperator(usedOps.remove());
+            setOperator(usedOps.remove());//TODO: improve
 
             if(usedOps.isEmpty()) return new Node(subexps.remove());
 
@@ -568,7 +565,7 @@ final class Node{
         //SCENARIO 1:
         if(!hasValue() && operator!=null) throw new IllegalStateException("Something went wrong");
         //SCENARIO 3:
-        if(hasValue() && operator==null) setOperator(usedOps.remove());//may throw if op does not match rank
+        if(hasValue() && operator==null) setOperator(usedOps.remove());//may throw if op does not match rank//TODO: improve
 
         subSubs.add(subexps.remove());//can it throw?
 
@@ -738,21 +735,36 @@ final class Slice{ //acts as a substring-like view without actually allocating a
         return length==0;
     }
 
-    public Slice subSlice(int beginIndex, int endIndex){
+    private boolean boundsMatch(int beginIndex, int endIndex){
 
         if(beginIndex<0 || endIndex>length) throw new IndexOutOfBoundsException();//TODO: Add message
         else if(endIndex<beginIndex) throw new IllegalArgumentException();//TODO: Add message
 
-        else if(beginIndex==0 && endIndex==length) return this;//must remain an immutable class
-        else return new Slice(
-                this.source,
-                this.start+beginIndex,
-                this.start+endIndex
-            );
+        else return beginIndex==0 && endIndex==length;
+    }
+
+    public Slice subSlice(int beginIndex, int endIndex){
+        return boundsMatch(beginIndex,endIndex)?
+                this://must remain an immutable class
+                new Slice(
+                        this.source,
+                        this.start+beginIndex,
+                        this.start+endIndex
+                );
     }
 
     public Slice subSlice(int beginIndex){
         return subSlice(beginIndex, this.length);
+    }
+
+    public String subSliceToString(int beginIndex, int endIndex){
+        return boundsMatch(beginIndex,endIndex)?
+                this.toString()://must remain an immutable class
+                source.substring(this.start+beginIndex, this.start+endIndex);
+    }
+
+    public String subSliceToString(int beginIndex){
+        return subSliceToString(beginIndex, this.length);
     }
 
     public boolean regionMatches(int thsOffset, String other, int othOffset, int regLen){
@@ -789,6 +801,11 @@ final class Slice{ //acts as a substring-like view without actually allocating a
     @Override
     public String toString(){
         return source.substring(start, end);
+    }
+
+    public int indexOf(char c){
+        int index = source.indexOf(c,start)-start;
+        return index<length?index:-1;
     }
 }
 
