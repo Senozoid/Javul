@@ -275,7 +275,7 @@ final class Node{
     private static final Pattern RADIX_PATTERN = Pattern.compile("0[boxBOX][a-fA-F\\d]+");//sign-stripped integer with radix
     private static final Pattern PAREN_PATTERN = Pattern.compile("^\\(+.*\\)+$");//expression enclosed in parentheses
 
-    private final Queue<Slice> subexps; // Stores index bounds
+    private final Queue<Slice> subexps;
     private final Queue<Operator> usedOps;
     private final int rank;
 
@@ -359,7 +359,7 @@ final class Node{
             }
             else if(c==')') throw new IllegalArgumentException("Unpaired ')' found in expression \""+expression+"\"");
 
-            Optional<Operator> optOp = operatorAt(i, expression, subAt==i);
+            Optional<Operator> optOp = Operator.matchAt(i, expression, subAt==i);
             if(optOp.isEmpty()) continue;//not an operator
             Operator foundOp = optOp.get();
 
@@ -391,29 +391,6 @@ final class Node{
 
         //identifier
         throw new IllegalStateException("Cannot fetch value from identifier \""+expression+"\""); //TODO: remove placeholder and fetch value from game-specific identifier
-    }
-
-    private static Optional<Operator> operatorAt(int index, Slice expression, boolean isUnary){
-        Operator foundOp = null;
-        Operator wrongOp = null;
-
-        for(Operator op:Operator.CACHED_VALUES){
-            if(!expression.regionMatches(index,op.sign,0,op.sign.length())) continue;
-            else if(isUnary != op.isUnary()){
-                wrongOp = op;
-                continue;
-            }
-            else{
-                foundOp = op;
-                break;
-            }
-        }
-        if(foundOp==null && wrongOp!=null) throw new IllegalArgumentException(
-                "Unexpected "+wrongOp
-                        +" at index "+index+" of expression \""+expression+"\""
-        );//unary operator with, or binary operator without left operand
-
-        return Optional.ofNullable(foundOp);
     }
 
     private static Slice disclose(Slice enclosed){
@@ -535,8 +512,10 @@ final class Node{
 
             if(usedOps.isEmpty()) return new Node(subexps.remove());
 
-            do subOps.add(usedOps.remove()); while(!usedOps.isEmpty());
+            do subOps.add(usedOps.remove()); while(!usedOps.isEmpty());//TODO: do some kind of addAll instead
             subSubs.add(subexps.remove());
+
+            //TODO: clear the queues?
 
             return new Node(
                     subSubs,
@@ -552,7 +531,7 @@ final class Node{
             SCENARIO 0. !hasValue() && operator==null: Expect (left) operand, then operator.
                 Happens the first time next() is called
 
-            SCENARIO 1. !hasValue() && operator!=null: Cannot already have operator without left operand. Error.
+            SCENARIO 1. !hasValue() && operator!=null: Cannot already have binary operator without left operand. Error.
                 Should never happen
 
             SCENARIO 2. hasValue() && operator!=null: Expect (right) operand.
@@ -584,6 +563,7 @@ final class Node{
             subOps.add(usedOps.remove());
             if(subRank < op.rank) subRank = op.rank;
 
+            //TODO: Does it work if I remove this?
             if(op.isUnary()){//if one unary is found, keep adding chain of adjacent unaries until binary or end
                 while(!usedOps.isEmpty() && usedOps.element().isUnary()) subOps.add(usedOps.remove());
             }
@@ -604,6 +584,7 @@ final class Node{
 
     public void reduce(){
         if(!hasValue()) throw new IllegalStateException("Attempt to reduce node without value");
+        //TODO: Is clearing the queues necessary?
         subexps.clear();
         usedOps.clear();
         removeOperator();
@@ -670,7 +651,37 @@ enum Operator{
     public final String sign;
     public final int rank;
 
-    public static final Operator[] CACHED_VALUES = values();
+    private static final Operator[] SORTED_VALUES = sortValues();
+
+    private static Operator[] sortValues(){
+        if(SORTED_VALUES!=null) throw new IllegalStateException("Illegal second call to boot-time initialization method; use SORTED_VALUES instead.");
+        Operator[] vals = values();
+        Arrays.sort(vals, (a,b) -> Integer.compare(b.sign.length(), a.sign.length()));
+        return vals;
+    }
+
+    public static Optional<Operator> matchAt(int index, Slice expression, boolean isUnary){
+        Operator foundOp = null;
+        Operator wrongOp = null;
+
+        for(Operator op:SORTED_VALUES){
+            if(!expression.regionMatches(index,op.sign,0,op.sign.length())) continue;
+            else if(isUnary != op.isUnary()){
+                wrongOp = op;
+                continue;
+            }
+            else{
+                foundOp = op;
+                break;
+            }
+        }
+        if(foundOp==null && wrongOp!=null) throw new IllegalArgumentException(
+                "Unexpected "+wrongOp
+                        +" at index "+index+" of expression \""+expression+"\""
+        );//unary operator with, or binary operator without left operand
+
+        return Optional.ofNullable(foundOp);
+    }
 
     Operator(String sign, int rank){
         this.sign = sign;
@@ -689,14 +700,56 @@ enum Operator{
 
 //TODO: Verify that the slice functionality for lists can be achieved using Collections.unmodifiableList(list.subList(start,end));
 
+/*
+final class ListSplitView<T>{
+    private final List<T> source;
+    private int leftBound;
+    private int splitIndex;
+
+    public ListSplitView(List<T> source){
+        this.source = source;
+        leftBound = splitIndex = 0;
+    }
+
+    public int leftSize(){
+        return splitIndex-leftBound;
+    }
+
+    public int rightSize(){
+        return source.size()-splitIndex;
+    }
+
+    public int totalSize(){
+        return source.size()-leftBound;
+    }
+
+    public boolean leftIsEmpty(){
+        return leftBound==splitIndex;
+    }
+
+    public boolean rightIsEmpty(){
+        return splitIndex==source.size();
+    }
+
+    public T advance(){
+        if(splitIndex==source.size()) throw new NoSuchElementException();//TODO: Add message
+        else return source.get(splitIndex++);
+    }
+
+    public ListSplitView<T> split(){
+        ListSplitView<T> leftPiece = new ListSplitView<>(Collections.unmodifiableList(source.subList(leftBound,splitIndex)));
+        leftBound = splitIndex;
+        return leftPiece;
+    }
+}
+*/
+
 final class Slice{ //acts as a substring-like view without actually allocating a new String instance
 
     //TODO: Add exception messages and javadoc comments
 
     private final String source;
-    private final int start;
-    private final int end;
-    private final int length;
+    private final int start, end, length;
 
     public Slice(String source, int start, int end){
         if(start==end) {
