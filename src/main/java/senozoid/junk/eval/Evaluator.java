@@ -278,7 +278,7 @@ final class Node{
 
     //TODO: Thoroughly verify these patterns analytically as well as with exhaustive tests:
     private static final Pattern FLOAT_PATTERN = Pattern.compile("[+-]?(?:\\d+\\.?\\d*|\\.\\d+)(?:[eE][+-]?\\d+)?[fFdD]?");//decimal floating point literal
-    private static final Pattern SPLIT_PATTERN = Pattern.compile("[+-]?(?:\\d+\\.?\\d*|\\.\\d+)[eE]|[+-]?\\d+[fFdD]");//incomplete decimal floating point literal
+    private static final Pattern SPLIT_PATTERN = Pattern.compile("[+-]?(?:\\d+\\.?\\d*|\\.\\d+)[eE]");//incomplete decimal floating point literal
     private static final Pattern RADIX_PATTERN = Pattern.compile("0[boxBOX][a-fA-F\\d]+");//sign-stripped integer with radix
     private static final Pattern PAREN_PATTERN = Pattern.compile("^\\(+.*\\)+$");//expression enclosed in parentheses
 
@@ -311,13 +311,14 @@ final class Node{
         but in that case, while efficiency will increase, floating point literals with signed exponent will not be supported.
         */
 
-        char firstChar = expression.charAt(0);
-        if(
-                (firstChar>='0' && firstChar<='9')
-                        || firstChar=='+'
-                        || firstChar=='-'
-                        || firstChar=='.'
-        ){
+        final char firstChar = expression.charAt(0);
+        final char lastChar = expression.charAt(len-1);
+        final boolean maybeNum = (firstChar>='0' && firstChar<='9')
+                || firstChar=='+'
+                || firstChar=='-'
+                || firstChar=='.';
+
+        if(maybeNum){
             //if decimal floating point literal
             if(expression.matchesPattern(FLOAT_PATTERN)){
                 final String valStr = expression.toString();
@@ -398,9 +399,8 @@ final class Node{
             else return;
         }
 
-        char lastChar = expression.charAt(len-1);
         if(
-                (lastChar=='E'||lastChar=='e'||lastChar=='F'||lastChar=='f'||lastChar=='D'||lastChar=='d')
+                maybeNum && (lastChar=='E'||lastChar=='e')
                 && expression.matchesPattern(SPLIT_PATTERN)
         ){//when sign of exponent is misinterpreted as an operator
             throw new IllegalArgumentException(
