@@ -5,29 +5,36 @@ import java.util.regex.Pattern;
 
 /*
 TODO: write docs explaining current quirks and possibly unexpected behaviour, some of which are:
-    1. There is no support for assignment operators, as handling identifiers is left up to you. To implement
+    1. Handling identifiers is left up to you, and there is no support for assignment operators. To implement
         handling of identifiers, see Node class constructor with a single String parameter.
         Example 1 -> By default, "2++2" is a valid expression, and equivalent to "2+(+2)".
-    2. Floating point literals with signed exponent should be enclosed in parentheses.
-        Example 1 -> "5*1.0E-10F+10" should be written as "5*(1.0E-10F)+10".
-    3. All unary operators are prefix operators, and have higher precedence than all binary operators.
+    2. All unary operators are prefix operators, and have higher precedence than all binary operators.
         Example 1 -> "0-2^14" and "-2^14" evaluate to -16 and +16 respectively.
         Example 2 -> "!(1>2)" evaluates to true, but "!1>2" is an illegal expression.
-    4. All binary operators of equal precedence are left associative.
+    3. All binary operators of equal precedence are left associative.
         Example 1 -> "x^y^z" is equivalent to "(x^y)^z", and not "x^(y^z)".
         Example 2 -> "24 / 3 / 4" evaluates to 2, and not 32.
-    5. By default, the binary modulo (%) operation is given higher precedence than division and multiplication,
+    4. By default, the binary modulo (%) operation is given higher precedence than division and multiplication,
         but changing this is as simple as changing a single value, i.e., rank of Operator#MOD.
         Example 1 -> By default, "8 / 8 % 6 * 2" is equivalent to "8 / (8 % 6) * 2".
-    6. Binary, octal, hexadecimal integer literals are supported with radix specified as "0b", "0o", "0x"
-        respectively. Underscores, non-decimal floating point literals, and 'L' suffixes are not supported.
-        Example 1 -> "0b1111==0xF" evaluates to true.
-    7. The possibility exists of allowing identifiers to be interpreted as either numeric or boolean
+    5. Binary, octal, hexadecimal integer literals are supported with radix specified as "0b", "0o", "0x"
+        respectively. Underscores, non-decimal floating point literals, and 'L' suffix are not supported.
+        Decimal floating point literals with signed exponent should be enclosed in parentheses.
+        Example 1 -> "5*1.0E-10F+10" should be written as "5*(1.0E-10F)+10".
+        Example 2 -> "0b1000==0o10" evaluates to true, but not "0o10==010".
+        Example 3 -> "0x1.ffP-10F" fails to evaluate as a floating point literal.
+    6. Arithmetic short-circuiting occurs assuming that the right-hand operand is a real numeric value. To change
+        this, just comment out the POW and MUL cases of the switch block in Evaluator#shortCircuit method.
+        Example 1 -> "1^(2/0)" evaluates to 1.
+        Example 2 -> "0*(2/0)" evaluates to 0.
+    7. Support for logarithm with negative base is limited to integral results.
+        Example 1 -> "-2@-4" (log of -2 with base -4) fails to evaluate, throwing an exception.
+    8. The possibility exists of allowing identifiers to be interpreted as either numeric or boolean
         operands (like int in C), but each operation takes and produces values of a particular type, and the
         two different types of value are not interconvertible or comparable (unlike int in C). To change this,
         see usages of field Node#type.
         Example 1 -> "1==1==true" is a valid expression, but "true==1==1" is not.
-    8. During numeric evaluation, intermediate values are stored as double precision type. If you allow
+    9. During numeric evaluation, intermediate values are stored as double precision type. If you allow
         numeric values to be interpreted as booleans, the boolean values are derived by first rounding (half up)
         to int, throwing an exception in case of overflow or underflow. To change these, see usages of
         field Node#value, method Evaluator#floatToInt, and method Node#toBool.
@@ -304,30 +311,38 @@ final class Node{
         but in that case, while efficiency will increase, floating point literals with signed exponent will not be supported.
         */
 
-        //if decimal floating point literal
-        if(expression.matchesPattern(FLOAT_PATTERN)){
-            final String valStr = expression.toString();
-            try{
-                setValue(Double.parseDouble(valStr),true);
-            } catch(NumberFormatException ignored){
-                //throw new IllegalArgumentException("Invalid number format: \""+valStr+"\"");
+        char firstChar = expression.charAt(0);
+        if(
+                (firstChar>='0' && firstChar<='9')
+                        || firstChar=='+'
+                        || firstChar=='-'
+                        || firstChar=='.'
+        ){
+            //if decimal floating point literal
+            if(expression.matchesPattern(FLOAT_PATTERN)){
+                final String valStr = expression.toString();
+                try{
+                    setValue(Double.parseDouble(valStr),true);
+                } catch(NumberFormatException ignored){
+                    //throw new IllegalArgumentException("Invalid number format: \""+valStr+"\"");
+                }
             }
-        }
 
-        //if sign-stripped integer literal with radix
-        else if(expression.matchesPattern(RADIX_PATTERN)){
-            final String valStr = expression.subSliceToString(2);
-            final char radChar = expression.charAt(1);
-            final int radix = switch(radChar){
-                case 'b','B' -> 2;
-                case 'o','O' -> 8;
-                case 'x','X' -> 16;
-                default -> throw new IllegalStateException("Unexpected radix specifier: \"0"+radChar+"\"");
-            };
-            try{
-                setValue(Long.parseLong(valStr,radix), true);
-            } catch(NumberFormatException ignored){
-                //throw new IllegalArgumentException("Invalid (base-"+radix+") integer format: \""+valStr+"\"");
+            //if sign-stripped integer literal with radix
+            else if(firstChar=='0' && expression.matchesPattern(RADIX_PATTERN)){
+                final String valStr = expression.subSliceToString(2);
+                final char radChar = expression.charAt(1);
+                final int radix = switch(radChar){
+                    case 'b','B' -> 2;
+                    case 'o','O' -> 8;
+                    case 'x','X' -> 16;
+                    default -> throw new IllegalStateException("Unexpected radix specifier: \"0"+radChar+"\"");
+                };
+                try{
+                    setValue(Long.parseLong(valStr,radix), true);
+                } catch(NumberFormatException ignored){
+                    //throw new IllegalArgumentException("Invalid (base-"+radix+") integer format: \""+valStr+"\"");
+                }
             }
         }
 
@@ -383,7 +398,11 @@ final class Node{
             else return;
         }
 
-        if(expression.matchesPattern(SPLIT_PATTERN)){//when sign of exponent is misinterpreted as an operator
+        char lastChar = expression.charAt(len-1);
+        if(
+                (lastChar=='E'||lastChar=='e'||lastChar=='F'||lastChar=='f'||lastChar=='D'||lastChar=='d')
+                && expression.matchesPattern(SPLIT_PATTERN)
+        ){//when sign of exponent is misinterpreted as an operator
             throw new IllegalArgumentException(
                     "Floating point literal with signed exponent must be enclosed in parentheses: \""+expression+"\""
             );
@@ -424,9 +443,25 @@ final class Node{
     public boolean valueEquals(Node other){
         if(other==null || !other.hasValue() || !this.hasValue()) return false;
         return switch(type){
-            case AMBI -> Math.abs(this.getValue()-other.getValue()) < Constants.TINY;
+            case AMBI -> {
+                double thisVal = this.getValue();
+                double otherVal = other.getValue();
+                if (thisVal==otherVal) yield true;
+
+                double diff = Math.abs(thisVal-otherVal);
+                if (thisVal==0||otherVal==0) yield diff<Constants.TINY;
+                yield diff/Math.max(Math.abs(thisVal),Math.abs(otherVal))<Constants.TINY;
+            }
             case BOOL -> this.toBool() == other.toBool();
-            case NUM -> Math.abs(this.toNum()-other.toNum()) < Constants.TINY;
+            case NUM -> {
+                double thisVal = this.toNum();
+                double otherVal = other.toNum();
+                if (thisVal==otherVal) yield true;
+
+                double diff = Math.abs(thisVal-otherVal);
+                if (thisVal==0||otherVal==0) yield diff<Constants.TINY;
+                yield diff/Math.max(Math.abs(thisVal),Math.abs(otherVal))<Constants.TINY;
+            }
         };
     }
 
@@ -665,7 +700,9 @@ enum Operator{
         Operator wrongOp = null;
 
         for(Operator op:SORTED_VALUES){
-            if(!expression.regionMatches(index,op.sign,0,op.sign.length())) continue;
+            if(expression.charAt(index) != op.sign.charAt(0)) continue;
+            if(op.sign.length()>1 && !expression.regionMatches(index+1,op.sign,1,op.sign.length()-1)) continue;
+
             else if(isUnary != op.isUnary()){
                 wrongOp = op;
                 continue;
@@ -697,52 +734,6 @@ enum Operator{
         return (isUnary()?"unary":"binary")+" \""+sign+"\"";
     }
 }
-
-//TODO: Verify that the slice functionality for lists can be achieved using Collections.unmodifiableList(list.subList(start,end));
-
-/*
-final class ListSplitView<T>{
-    private final List<T> source;
-    private int leftBound;
-    private int splitIndex;
-
-    public ListSplitView(List<T> source){
-        this.source = source;
-        leftBound = splitIndex = 0;
-    }
-
-    public int leftSize(){
-        return splitIndex-leftBound;
-    }
-
-    public int rightSize(){
-        return source.size()-splitIndex;
-    }
-
-    public int totalSize(){
-        return source.size()-leftBound;
-    }
-
-    public boolean leftIsEmpty(){
-        return leftBound==splitIndex;
-    }
-
-    public boolean rightIsEmpty(){
-        return splitIndex==source.size();
-    }
-
-    public T advance(){
-        if(splitIndex==source.size()) throw new NoSuchElementException();//TODO: Add message
-        else return source.get(splitIndex++);
-    }
-
-    public ListSplitView<T> split(){
-        ListSplitView<T> leftPiece = new ListSplitView<>(Collections.unmodifiableList(source.subList(leftBound,splitIndex)));
-        leftBound = splitIndex;
-        return leftPiece;
-    }
-}
-*/
 
 final class Slice{ //acts as a substring-like view without actually allocating a new String instance
 
