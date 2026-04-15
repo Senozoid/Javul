@@ -3,6 +3,8 @@ package senozoid.junk.eval;
 import java.util.*;
 import java.util.regex.Pattern;
 
+//TODO: change from "Junk" to "Javul"
+
 /*
 TODO: write docs explaining current quirks and possibly unexpected behaviour, some of which are:
     1. Handling identifiers is left up to you, and there is no support for assignment operators. To implement
@@ -280,7 +282,6 @@ final class Node{
     private static final Pattern FLOAT_PATTERN = Pattern.compile("[+-]?(?:\\d+\\.?\\d*|\\.\\d+)(?:[eE][+-]?\\d+)?[fFdD]?");//decimal floating point literal
     private static final Pattern SPLIT_PATTERN = Pattern.compile("[+-]?(?:\\d+\\.?\\d*|\\.\\d+)[eE]");//incomplete decimal floating point literal
     private static final Pattern RADIX_PATTERN = Pattern.compile("0[boxBOX][a-fA-F\\d]+");//sign-stripped integer with radix
-    private static final Pattern PAREN_PATTERN = Pattern.compile("^\\(+.*\\)+$");//expression enclosed in parentheses
 
     private final Queue<Slice> subexps;
     private final Queue<Operator> usedOps;
@@ -318,14 +319,15 @@ final class Node{
                 || firstChar=='-'
                 || firstChar=='.';
 
+        //for numeric literals
         if(maybeNum){
             //if decimal floating point literal
             if(expression.matchesPattern(FLOAT_PATTERN)){
                 final String valStr = expression.toString();
                 try{
                     setValue(Double.parseDouble(valStr),true);
-                } catch(NumberFormatException ignored){
-                    //throw new IllegalArgumentException("Invalid number format: \""+valStr+"\"");
+                } catch(NumberFormatException unexpected){
+                    throw new IllegalStateException("Rejected number format: \""+valStr+"\"");
                 }
             }
 
@@ -342,12 +344,12 @@ final class Node{
                 try{
                     setValue(Long.parseLong(valStr,radix), true);
                 } catch(NumberFormatException ignored){
-                    //throw new IllegalArgumentException("Invalid (base-"+radix+") integer format: \""+valStr+"\"");
+                    throw new IllegalStateException("Rejected (base-"+radix+") integer format: \""+valStr+"\"");
                 }
             }
         }
 
-        //if boolean literal
+        //for boolean literals
         if(expression.contentEqualsIgnoreCase("true")) setValue(true);
         else if(expression.contentEqualsIgnoreCase("false")) setValue(false);
 
@@ -413,9 +415,10 @@ final class Node{
     }
 
     private static Slice disclose(Slice enclosed){
-        if(!enclosed.matchesPattern(PAREN_PATTERN)) return enclosed;
 
         final int len=enclosed.length();
+        if(len<2 || enclosed.charAt(0)!='(' || enclosed.charAt(len-1)!=')') return enclosed;
+
         int b=1, i=0, m=b;
         do{
             int e=++i+b; //expected minimum length
