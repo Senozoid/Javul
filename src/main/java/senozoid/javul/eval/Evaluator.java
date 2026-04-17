@@ -1,9 +1,7 @@
-package senozoid.junk.eval;
+package senozoid.javul.eval;
 
 import java.util.*;
 import java.util.regex.Pattern;
-
-//TODO: change from "Junk" to "Javul"
 
 /*
 TODO: write docs explaining current quirks and possibly unexpected behaviour, some of which are:

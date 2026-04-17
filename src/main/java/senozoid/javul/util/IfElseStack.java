@@ -1,4 +1,4 @@
-package senozoid.junk.util;
+package senozoid.javul.util;
 
 import java.io.Serializable;
 import java.util.ArrayDeque;

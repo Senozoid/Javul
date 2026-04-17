@@ -1,3 +1,3 @@
-senozoid.junk.eval.BooleanEvaluator
-    Do not change the order of elements in the validOperators array. If a delimiter is recognised through a regex which is a subexpression of another regex, the smaller one must appear later in the checking order. For example, the loop in evalTerm() should not look for "<" before "<=", or for ">" before ">=".
+senozoid.javul.eval.Evaluator
+    Do not change the order of operator declarations. If the symbol of an operator is a substring of the symbol of another operator of same type (unary/binary), the smaller one must appear later in the checking order. For example, "<" should not be looked for before "<=", or ">" before ">=".
 
