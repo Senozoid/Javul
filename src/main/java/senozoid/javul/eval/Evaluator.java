@@ -1,12 +1,14 @@
 package senozoid.javul.eval;
 
+import senozoid.javul.util.Slice;
+
 import java.util.*;
 import java.util.regex.Pattern;
 
 /*
 TODO: write docs explaining current quirks and possibly unexpected behaviour, some of which are:
     1. Handling identifiers is left up to you, and there is no support for assignment operators. To implement
-        handling of identifiers, see Node class constructor with a single String parameter.
+        handling of identifiers, see EvalNode class constructor with a single String parameter.
         Example 1 -> By default, "2++2" is a valid expression, and equivalent to "2+(+2)".
     2. All unary operators are prefix operators, and have higher precedence than all binary operators.
         Example 1 -> "0-2^14" and "-2^14" evaluate to -16 and +16 respectively.
@@ -32,12 +34,12 @@ TODO: write docs explaining current quirks and possibly unexpected behaviour, so
     8. The possibility exists of allowing identifiers to be interpreted as either numeric or boolean
         operands (like int in C), but each operation takes and produces values of a particular type, and the
         two different types of value are not interconvertible or comparable (unlike int in C). To change this,
-        see usages of field Node#type.
+        see usages of field EvalNode#type.
         Example 1 -> "1==1==true" is a valid expression, but "true==1==1" is not.
     9. During numeric evaluation, intermediate values are stored as double precision type. If you allow
         numeric values to be interpreted as booleans, the boolean values are derived by first rounding (half up)
         to int, throwing an exception in case of overflow or underflow. To change these, see usages of
-        field Node#value, method Evaluator#floatToInt, and method Node#toBool.
+        field EvalNode#value, method Evaluator#floatToInt, and method EvalNode#toBool.
         Example 1 -> "7/2==3.5" evaluates to true, but numeric evaluation of "7/2" results in 4.
         Example 2 -> If numeric values are made comparable to booleans, then "-0.5==false" evaluates to true.
     ...
@@ -62,9 +64,9 @@ public final class Evaluator{
         return evaluate(expression).toBool();
     }
 
-    private static Node evaluate(String expression){
-        Stack stack = new Stack(expression);
-        Node node = stack.peek();
+    private static EvalNode evaluate(String expression){
+        EvalStack stack = new EvalStack(expression);
+        EvalNode node = stack.peek();
         do{
             if(!node.isDone()){
                 node = stack.expand();
@@ -76,7 +78,7 @@ public final class Evaluator{
         }while(true);
     }
 
-    private static Node operate(Node parent, Node child){
+    private static EvalNode operate(EvalNode parent, EvalNode child){
         if(!child.isDone()) throw new IllegalArgumentException("Cannot operate, child node not done");
 
         Optional<Operator> optOp = parent.getOperator();
@@ -214,7 +216,7 @@ public final class Evaluator{
         throw new ArithmeticException("Logarithm not possible");
     }
 
-    private static Node shortCircuit(Node node){
+    private static EvalNode shortCircuit(EvalNode node){
 
         if(!node.hasValue()) throw new IllegalArgumentException("Cannot short-circuit without value");
         Optional<Operator> optOp = node.getOperator();
@@ -244,27 +246,27 @@ public final class Evaluator{
 
 }
 
-final class Stack{
+final class EvalStack{
 
-    private final Deque<Node> stack = new ArrayDeque<>();
-    Node peek(){return stack.element();}
-    void push(Node node){stack.push(node);}
-    Node pop(){return stack.pop();}
+    private final Deque<EvalNode> stack = new ArrayDeque<>();
+    EvalNode peek(){return stack.element();}
+    void push(EvalNode node){stack.push(node);}
+    EvalNode pop(){return stack.pop();}
     boolean isEmpty(){return stack.isEmpty();}
 
-    Stack(String raw){
+    EvalStack(String raw){
         Slice compact = new Slice(
                 raw.replaceAll("\\s+","")
                 //.replace("-+","-")
                 //.replace("---","-")
                 //.replace("!!!","!")
         );
-        push(new Node(compact));
+        push(new EvalNode(compact));
     }
 
-    Node expand(){
+    EvalNode expand(){
         if(isEmpty()) throw new NoSuchElementException("Cannot expand empty stack");
-        Node node = peek();
+        EvalNode node = peek();
         do{
             node = node.next();
             push(node);
@@ -274,7 +276,7 @@ final class Stack{
 
 }
 
-final class Node{
+final class EvalNode{
 
     //TODO: Thoroughly verify these patterns analytically as well as with exhaustive tests:
     private static final Pattern FLOAT_PATTERN = Pattern.compile("[+-]?(?:\\d+\\.?\\d*|\\.\\d+)(?:[eE][+-]?\\d+)?[fFdD]?");//decimal floating point literal
@@ -290,13 +292,13 @@ final class Node{
     private double value = 0;
     private Type type = Type.AMBI;//because numeric and boolean values are not allowed to interchange
 
-    private Node(Queue<Slice> subexps, Queue<Operator> usedOps, int rank){
+    private EvalNode(Queue<Slice> subexps, Queue<Operator> usedOps, int rank){
         this.subexps = subexps;
         this.usedOps = usedOps;
         this.rank = rank;
     }
 
-    public Node(Slice original){
+    public EvalNode(Slice original){
         final Slice expression = disclose(original);//no null check
         if(expression.isEmpty()) throw new IllegalArgumentException("Expression must not be blank");
 
@@ -390,7 +392,7 @@ final class Node{
         else subexps.add(expression.subSlice(subAt));
         this.rank = tempRank;
 
-        if(isDone()) throw new IllegalStateException("Node could not be created");
+        if(isDone()) throw new IllegalStateException("EvalNode could not be created");
 
         //TODO: Best place to reduce a chain of unary operators
 
@@ -441,7 +443,7 @@ final class Node{
         return init;
     }
 
-    public boolean valueEquals(Node other){
+    public boolean valueEquals(EvalNode other){
         if(other==null || !other.hasValue() || !this.hasValue()) return false;
         return switch(type){
             case AMBI -> {
@@ -506,13 +508,13 @@ final class Node{
         setValue(value?1:0, false);
     }
 
-    public void setValue(Node toCopy){
+    public void setValue(EvalNode toCopy){
         setType(toCopy.type);
         setValue(toCopy.getValue(), false);
     }
 
     public Optional<Operator> getOperator(){
-        if(operator!=null && operator.rank!=this.rank) throw new IllegalStateException("Node operator does not match rank");
+        if(operator!=null && operator.rank!=this.rank) throw new IllegalStateException("EvalNode operator does not match rank");
         else return Optional.ofNullable(operator);
     }
 
@@ -531,7 +533,7 @@ final class Node{
         else return true;
     }
 
-    public Node next(){
+    public EvalNode next(){
 
         if(isDone()) throw new NoSuchElementException("Done node has no next");
 
@@ -546,14 +548,14 @@ final class Node{
 
             setOperator(usedOps.remove());//TODO: improve
 
-            if(usedOps.isEmpty()) return new Node(subexps.remove());
+            if(usedOps.isEmpty()) return new EvalNode(subexps.remove());
 
             do subOps.add(usedOps.remove()); while(!usedOps.isEmpty());//TODO: do some kind of addAll instead
             subSubs.add(subexps.remove());
 
             //TODO: clear the queues?
 
-            return new Node(
+            return new EvalNode(
                     subSubs,
                     subOps,
                     this.rank//==0
@@ -614,8 +616,8 @@ final class Node{
         if(operator==null || subSubs.isEmpty()) throw new IllegalStateException("Something went wrong");
 
         return (subOps.isEmpty() && subSubs.size()==1)?
-                new Node(subSubs.remove())://so that a raw subexpression is not mistaken for a term
-                new Node(subSubs, subOps, subRank);
+                new EvalNode(subSubs.remove())://so that a raw subexpression is not mistaken for a term
+                new EvalNode(subSubs, subOps, subRank);
     }
 
     public void reduce(){
@@ -634,7 +636,7 @@ final class Node{
         if(usedOps.isEmpty()) builder.append("; Terminal node");
         else{
             builder.append("; Operators: ").append(usedOps);
-            builder.append("; Node rank: ").append(this.rank);
+            builder.append("; EvalNode rank: ").append(this.rank);
         }
         return builder.toString();
     }
@@ -733,124 +735,6 @@ enum Operator{
     @Override
     public String toString(){
         return (isUnary()?"unary":"binary")+" \""+sign+"\"";
-    }
-}
-
-final class Slice{ //acts as a substring-like view without actually allocating a new String instance
-
-    //TODO: Add exception messages and javadoc comments
-
-    private final String source;
-    private final int start, end, length;
-
-    public Slice(String source, int start, int end){
-        if(start==end) {
-            this.source = "";//unique literal lives in pool, helps avoid unnecessary null risks
-            this.start = this.end = this.length = 0;
-            return;
-        }
-        else if(start<0 || end>source.length()) throw new IndexOutOfBoundsException();//TODO: Add message
-        else if(end<start) throw new IllegalArgumentException();//TODO: Add message
-        else {
-            this.source = source;
-            this.start = start;
-            this.end = end;
-            this.length = end-start;
-        }
-    }
-
-    public Slice(String source, int start){
-        this(source, start, source.length());
-    }
-
-    public Slice(String source){
-        this(source, 0);
-    }
-
-    public int length(){
-        return length;
-    }
-
-    public char charAt(int index){
-        if(index<0 || index>(length-1)) throw new IndexOutOfBoundsException();//TODO: Add message
-        return source.charAt(start+index);
-    }
-
-    public boolean isEmpty(){
-        return length==0;
-    }
-
-    private boolean boundsMatch(int beginIndex, int endIndex){
-
-        if(beginIndex<0 || endIndex>length) throw new IndexOutOfBoundsException();//TODO: Add message
-        else if(endIndex<beginIndex) throw new IllegalArgumentException();//TODO: Add message
-
-        else return beginIndex==0 && endIndex==length;
-    }
-
-    public Slice subSlice(int beginIndex, int endIndex){
-        return boundsMatch(beginIndex,endIndex)?
-                this://must remain an immutable class
-                new Slice(
-                        this.source,
-                        this.start+beginIndex,
-                        this.start+endIndex
-                );
-    }
-
-    public Slice subSlice(int beginIndex){
-        return subSlice(beginIndex, this.length);
-    }
-
-    public String subSliceToString(int beginIndex, int endIndex){
-        return boundsMatch(beginIndex,endIndex)?
-                this.toString()://must remain an immutable class
-                source.substring(this.start+beginIndex, this.start+endIndex);
-    }
-
-    public String subSliceToString(int beginIndex){
-        return subSliceToString(beginIndex, this.length);
-    }
-
-    public boolean regionMatches(int thsOffset, String other, int othOffset, int regLen){
-        return source.regionMatches(this.start+thsOffset, other, othOffset, regLen);
-    }
-
-    private boolean contentEquals(boolean ignoreCase, String other, int offset){
-        if(this.isEmpty()){
-            if(other==null) return offset==0;
-            else return offset==other.length();
-        }
-        else if(this.length != other.length()-offset) return false;
-        return source.regionMatches(ignoreCase, this.start, other, offset, length);
-    }
-
-    public boolean contentEquals(String other){
-        return contentEquals(false, other, 0);
-    }
-
-    public boolean contentEqualsIgnoreCase(String other){
-        return contentEquals(true, other, 0);
-    }
-
-    public boolean contentEquals(Slice other){
-        if(this.length != other.length) return false;
-        else if(this.isEmpty()) return true;
-        else return contentEquals(false, other.source, other.start);
-    }
-
-    public boolean matchesPattern(Pattern pattern){
-        return pattern.matcher(source).region(start, end).matches();
-    }
-
-    @Override
-    public String toString(){
-        return source.substring(start, end);
-    }
-
-    public int indexOf(char c){
-        int index = source.indexOf(c,start)-start;
-        return index<length?index:-1;
     }
 }
 
